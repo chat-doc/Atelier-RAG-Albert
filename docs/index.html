@@ -67,8 +67,9 @@
 <main id="app-main">
     <h1 class="page-title">Collections Albert</h1>
 
-    <!-- Message d'action -->
-    <section class="rag-block hidden" data-show-when="has-message" id="message-block">
+    <!-- Message d'action (persistant sur erreur, auto-hide sur succes) -->
+    <!-- NB : pas de data-show-when : showMessage() gere hidden directement -->
+    <section class="rag-block hidden" id="message-block">
         <strong data-bind="message-title">-</strong>
         <p data-bind="message-text">-</p>
     </section>
