@@ -111,8 +111,12 @@ jobs:
         run: |
           mkdir -p src
           if [ "$TARGET_REF" = "main" ] || [ -z "$TARGET_REF" ]; then
+            # NB : `awk 'exit'` ferme le pipe et fait retourner git ls-remote
+            # avec SIGPIPE (exit 141) sous bash avec pipefail (cas typique CI).
+            # Pattern NR==1 && /^ref:/ imprime la 1re ligne matchee, awk lit
+            # le reste sans erreur.
             DETECTED=$(git ls-remote --symref "$TARGET_REPO_URL" HEAD 2>/dev/null \
-              | awk '/^ref:/{sub("refs/heads/","",$2); print $2; exit}')
+              | awk 'NR==1 && /^ref:/{sub("refs/heads/","",$2); print $2}')
             if [ -n "$DETECTED" ]; then
               echo "Default branch detecte : $DETECTED (override de '$TARGET_REF')"
               TARGET_REF="$DETECTED"
