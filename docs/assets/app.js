@@ -150,7 +150,14 @@ function showMessage(type, title, text) {
     block.classList.remove('hidden');
     document.querySelector('[data-bind="message-title"]').textContent = title;
     document.querySelector('[data-bind="message-text"]').textContent = text;
-    setTimeout(() => block.classList.add('hidden'), 6000);
+    // Log dans la console pour faciliter le debug (les erreurs reseau/CORS
+    // apparaissent aussi dans DevTools > Network).
+    if (type === 'error') {
+        console.error(`[${title}]`, text);
+        // Erreurs persistantes : on ne cache pas automatiquement.
+    } else {
+        setTimeout(() => block.classList.add('hidden'), 6000);
+    }
 }
 
 /* ============ VISIBILITE (data-show-when / data-hidden-when) ============ */
