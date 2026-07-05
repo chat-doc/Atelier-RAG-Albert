@@ -225,6 +225,17 @@ jobs:
             echo "Ou : remplir albert_api_key_override dans les inputs du workflow."
             exit 1
           fi
+          # NB : on strippe les whitespaces (newline final ajoute par le copy-paste
+          # depuis GitHub UI est la cause n1 des erreurs "401 Unauthorized").
+          TOKEN=$(printf '%s' "$TOKEN" | tr -d '\r\n\t ' )
+          # Sanity check : la cle Albert doit commencer par sk- (JWT)
+          if [[ ! "$TOKEN" =~ ^sk- ]]; then
+            echo "ATTENTION : la cle ne commence pas par 'sk-' comme attendu."
+            echo "Longueur (masquee) : ${#TOKEN} caracteres."
+            echo "Premier caractere : ${TOKEN:0:1}"
+            echo "Verifie qu'il n'y a pas d'espaces ou d'apostrophes autour."
+          fi
+          echo "Longueur token : ${#TOKEN} caracteres (apres strip)"
           # Masque la cle dans les logs subsequents
           echo "::add-mask::$TOKEN"
           # Export via GITHUB_ENV (jamais dans les outputs pour eviter la fuite)
