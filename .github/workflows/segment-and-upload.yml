@@ -1,0 +1,252 @@
+# Workflow "Segment and upload to Albert"
+#
+# Declenchement : manuel via l'UI GitHub Actions (Run workflow), avec inputs
+# pre-remplis. Pas d'API PHP externe : l'operateur remplit les champs a la
+# main sur github.com.
+#
+# Cle Albert : recommandation forte de la stocker en secret repo
+# (Settings > Secrets and variables > Actions > New secret : ALBERT_API_KEY).
+# Un champ input "albert_api_key_override" permet un override ponctuel pour
+# tester avec une autre cle. La cle est masquee des logs par ::add-mask::.
+
+name: Segment and upload to Albert
+
+run-name: >-
+  ${{ inputs.dry_run == 'true' && 'DRY-RUN: ' || '' }}${{ inputs.empty_collection_first == 'true' && 'PURGE + ' || '' }}${{ inputs.target_repo_url }} -> collection ${{ inputs.albert_collection_id }}
+
+on:
+  workflow_dispatch:
+    inputs:
+      target_repo_url:
+        description: 'URL HTTPS du dépôt Markdown à indexer'
+        required: true
+        default: 'https://forge.apps.education.fr/docs/docs.forge.apps.education.fr'
+      target_ref:
+        description: 'Branche / tag / SHA (default main, fallback master auto)'
+        required: false
+        default: 'main'
+      content_dir:
+        description: 'Sous-dossier des .md (vide = auto : content > src > racine)'
+        required: false
+        default: ''
+      site_base_url:
+        description: 'URL publique du site (pour construire source_url avec ancre)'
+        required: false
+        default: 'https://docs.forge.apps.education.fr'
+      albert_collection_id:
+        description: 'ID de la collection Albert cible'
+        required: true
+        default: '241559'
+      target_chars:
+        description: "Taille cible d'un segment (caractères)"
+        required: false
+        default: '1600'
+      overlap:
+        description: 'Chevauchement entre segments (caractères)'
+        required: false
+        default: '200'
+      empty_collection_first:
+        description: 'Vider la collection avant upload (true/false)'
+        required: false
+        default: 'false'
+        type: choice
+        options: ['false', 'true']
+      dry_run:
+        description: 'Segmenter sans uploader (true/false)'
+        required: false
+        default: 'false'
+        type: choice
+        options: ['false', 'true']
+      albert_api_key_override:
+        description: 'Clé Albert (laisser vide pour utiliser le secret ALBERT_API_KEY)'
+        required: false
+        default: ''
+
+concurrency:
+  group: segment-${{ inputs.albert_collection_id }}
+  cancel-in-progress: true
+
+jobs:
+
+  # ---------------------------------------------------------------------------
+  # 1. Validation des inputs.
+  # ---------------------------------------------------------------------------
+  validate-input:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Validate URL
+        env:
+          TARGET_REPO_URL: ${{ inputs.target_repo_url }}
+        run: |
+          if [ -z "$TARGET_REPO_URL" ]; then
+            echo "ERREUR: target_repo_url est obligatoire."
+            exit 1
+          fi
+          if ! echo "$TARGET_REPO_URL" | grep -qE '^https://(forge\.apps\.education\.fr|gitlab\.com|github\.com|codeberg\.org)/'; then
+            echo "ERREUR: URL non supportee (whitelist : forge.apps.education.fr, gitlab.com, github.com, codeberg.org)"
+            exit 1
+          fi
+          echo "Cible : $TARGET_REPO_URL (${{ inputs.target_ref }})"
+      - name: Validate collection id
+        env:
+          COLLECTION_ID: ${{ inputs.albert_collection_id }}
+        run: |
+          if ! echo "$COLLECTION_ID" | grep -qE '^[0-9]+$'; then
+            echo "ERREUR: albert_collection_id doit etre un entier."
+            exit 1
+          fi
+          echo "Collection cible : $COLLECTION_ID"
+
+  # ---------------------------------------------------------------------------
+  # 2. Clone shallow du depot cible.
+  # ---------------------------------------------------------------------------
+  prepare:
+    needs: validate-input
+    runs-on: ubuntu-latest
+    steps:
+      - name: Clone target
+        env:
+          TARGET_REPO_URL: ${{ inputs.target_repo_url }}
+          TARGET_REF: ${{ inputs.target_ref }}
+        run: |
+          mkdir -p src
+          if [ "$TARGET_REF" = "main" ] || [ -z "$TARGET_REF" ]; then
+            DETECTED=$(git ls-remote --symref "$TARGET_REPO_URL" HEAD 2>/dev/null \
+              | awk '/^ref:/{sub("refs/heads/","",$2); print $2; exit}')
+            if [ -n "$DETECTED" ]; then
+              echo "Default branch detecte : $DETECTED (override de '$TARGET_REF')"
+              TARGET_REF="$DETECTED"
+            fi
+          fi
+          git -c core.protectNTFS=false -c core.protectHFS=false \
+              clone --depth=1 --branch "$TARGET_REF" "$TARGET_REPO_URL" src/target
+          du -sh src/target
+
+      - name: Strip paths invalid for upload-artifact
+        run: |
+          cd src/target
+          INVALID=$(find . -type f -regextype posix-extended -regex '.*[*?":<>|].*' 2>/dev/null || true)
+          if [ -n "$INVALID" ]; then
+            echo "$INVALID" | while IFS= read -r f; do rm -f "$f" 2>/dev/null || true; done
+          fi
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: target-src
+          path: src/target/
+          retention-days: 1
+          include-hidden-files: true
+          if-no-files-found: error
+
+  # ---------------------------------------------------------------------------
+  # 3. Segmentation : produit segments.jsonl + report.json.
+  # ---------------------------------------------------------------------------
+  segment:
+    needs: prepare
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/download-artifact@v4
+        with:
+          name: target-src
+          path: src/target
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+          cache: pip
+      - name: Install
+        run: pip install --quiet -r requirements.txt
+
+      - name: Segmenter
+        env:
+          CONTENT_DIR: ${{ inputs.content_dir }}
+          SITE_BASE_URL: ${{ inputs.site_base_url }}
+          TARGET_CHARS: ${{ inputs.target_chars }}
+          OVERLAP: ${{ inputs.overlap }}
+        run: |
+          echo -n > segments.jsonl
+          echo '{"stats":{"files_scanned":0,"documents_created":0,"segments_total":0,"documents_excluded":0,"errors":1},"excluded":[]}' > report.json
+          python -m app.cli \
+            --source-dir src/target \
+            --content-dir "$CONTENT_DIR" \
+            --site-base-url "$SITE_BASE_URL" \
+            --target-chars "$TARGET_CHARS" \
+            --overlap "$OVERLAP" \
+            --output segments.jsonl \
+            --report report.json
+          echo "Segments (lignes) : $(wc -l < segments.jsonl)"
+          jq '.stats' report.json 2>/dev/null || cat report.json
+
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: segments
+          path: |
+            segments.jsonl
+            report.json
+          retention-days: 30
+          if-no-files-found: error
+
+  # ---------------------------------------------------------------------------
+  # 4. Upload vers Albert (skip si dry_run).
+  # ---------------------------------------------------------------------------
+  upload:
+    needs: segment
+    runs-on: ubuntu-latest
+    if: ${{ inputs.dry_run != 'true' }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/download-artifact@v4
+        with:
+          name: segments
+          path: .
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+          cache: pip
+      - name: Install
+        run: pip install --quiet -r requirements.txt
+
+      - name: Resolve Albert API key
+        id: key
+        env:
+          INPUT_TOKEN: ${{ inputs.albert_api_key_override }}
+          SECRET_TOKEN: ${{ secrets.ALBERT_API_KEY }}
+        run: |
+          if [ -n "$INPUT_TOKEN" ]; then
+            TOKEN="$INPUT_TOKEN"
+            echo "Source de la cle : input (override manuel)"
+          elif [ -n "$SECRET_TOKEN" ]; then
+            TOKEN="$SECRET_TOKEN"
+            echo "Source de la cle : secret ALBERT_API_KEY"
+          else
+            echo "ERREUR: aucune cle Albert configuree."
+            echo "Solution : Settings > Secrets and variables > Actions > ALBERT_API_KEY"
+            echo "Ou : remplir albert_api_key_override dans les inputs du workflow."
+            exit 1
+          fi
+          # Masque la cle dans les logs subsequents
+          echo "::add-mask::$TOKEN"
+          # Export via GITHUB_ENV (jamais dans les outputs pour eviter la fuite)
+          echo "ALBERT_API_KEY=$TOKEN" >> "$GITHUB_ENV"
+
+      - name: Upload to Albert
+        env:
+          COLLECTION_ID: ${{ inputs.albert_collection_id }}
+          EMPTY_FIRST: ${{ inputs.empty_collection_first }}
+        run: |
+          ARGS="--segments segments.jsonl --report upload_report.json --collection-id $COLLECTION_ID --api-key $ALBERT_API_KEY"
+          if [ "$EMPTY_FIRST" = "true" ]; then
+            ARGS="$ARGS --empty-first"
+          fi
+          python -m app.upload $ARGS
+          echo "---"
+          jq '.stats' upload_report.json 2>/dev/null || cat upload_report.json
+
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: upload
+          path: upload_report.json
+          retention-days: 30
+          if-no-files-found: error
