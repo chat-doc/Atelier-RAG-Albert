@@ -648,6 +648,60 @@ dialog.app-modal footer {
 ::-webkit-scrollbar-thumb { background: var(--border-strong); border-radius: 5px; border: 2px solid var(--bg); }
 ::-webkit-scrollbar-thumb:hover { background: var(--muted); }
 
+/* ============ Formulaire pipeline ============ */
+.stacked-form {
+    display: flex;
+    flex-direction: column;
+    gap: 1.1rem;
+    max-width: 720px;
+}
+.stacked-form label {
+    display: flex;
+    flex-direction: column;
+    gap: 0.3rem;
+}
+.stacked-form label > span:first-child {
+    color: var(--muted-strong);
+    font-size: 0.7rem;
+    text-transform: uppercase;
+    letter-spacing: 0.05em;
+    font-weight: 600;
+}
+.stacked-form input,
+.stacked-form select {
+    background: white;
+    border: 1px solid var(--border);
+    color: var(--text);
+    padding: 0.55rem 0.75rem;
+    border-radius: 3px;
+    font-family: var(--font-mono);
+    font-size: 0.88rem;
+}
+.stacked-form input:focus,
+.stacked-form select:focus {
+    outline: none;
+    border-color: var(--accent);
+}
+.stacked-form .hint {
+    color: var(--muted);
+    font-size: 0.72rem;
+    font-family: var(--font-sans);
+    line-height: 1.4;
+}
+.grid-2 {
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(240px, 1fr));
+    gap: 1rem;
+}
+.actions-row {
+    display: flex;
+    align-items: center;
+    gap: 1rem;
+    flex-wrap: wrap;
+    padding-top: 0.5rem;
+    border-top: 1px solid var(--border);
+}
+
 /* ============ Responsive ============ */
 @media (max-width: 720px) {
     #app-header { flex-direction: column; align-items: flex-start; }

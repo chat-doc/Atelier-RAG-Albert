@@ -4,15 +4,15 @@
     <meta charset="utf-8">
     <meta name="viewport" content="width=device-width, initial-scale=1">
     <title>Atelier RAG Albert</title>
-    <meta name="description" content="Gestionnaire de collections Albert et déclencheur de pipelines RAG.">
-    <!-- Content Security Policy stricte : uniquement l'API Albert autorisée. -->
+    <meta name="description" content="Déclencheur de pipelines RAG Albert via GitHub Actions.">
+    <!-- CSP stricte : la Pages ne fait AUCUN appel externe par défaut.
+         Seul api.github.com est autorisé, uniquement si l'utilisateur configure un PAT. -->
     <meta http-equiv="Content-Security-Policy" content="
         default-src 'self';
         script-src 'self';
         style-src 'self' 'unsafe-inline';
-        connect-src https://albert.api.etalab.gouv.fr https://api.github.com;
+        connect-src 'self' https://api.github.com;
         img-src 'self' data:;
-        frame-ancestors 'none';
         form-action 'self';
     ">
     <link rel="icon" type="image/png" href="assets/favicon.png">
@@ -32,26 +32,20 @@
     <div class="token-zone">
         <details class="token-details" id="token-details">
             <summary>
-                <span class="badge" id="token-badge">Clé Albert requise</span>
-                <span class="muted small" data-bind="user-email"></span>
+                <span class="badge" id="token-badge">Token GitHub (optionnel)</span>
             </summary>
             <div class="token-form">
                 <div class="token-row">
-                    <label for="albert-token-input">Clé Albert (obligatoire)</label>
-                    <input type="password" id="albert-token-input" placeholder="sk-eyJhbGci..." autocomplete="off">
-                    <span class="hint">Nécessaire pour lister et gérer les collections. Stockée en localStorage.</span>
-                </div>
-                <div class="token-row">
-                    <label for="github-token-input">Token GitHub (optionnel)</label>
+                    <label for="github-token-input">Personal Access Token GitHub</label>
                     <input type="password" id="github-token-input" placeholder="github_pat_..." autocomplete="off">
                     <span class="hint">
-                        Nécessaire uniquement si tu veux <strong>déclencher les pipelines</strong> depuis cette page
-                        au lieu d'aller sur GitHub Actions. Fine-grained PAT, scope Actions read/write sur ce dépôt.
+                        <strong>Optionnel.</strong> Si tu colles un PAT, le formulaire déclenche directement le workflow via l'API GitHub. Sinon, il t'ouvre l'UI GitHub Actions où tu confirmes le lancement.
+                        Le token est stocké en <code>sessionStorage</code> (supprimé à la fermeture de l'onglet). Fine-grained PAT, scope Actions read/write sur ce dépôt uniquement.
                     </span>
                 </div>
                 <div class="token-actions">
-                    <button type="button" data-action="save-tokens" class="primary">Enregistrer</button>
-                    <button type="button" data-action="clear-storage" class="danger">Vider stockage local</button>
+                    <button type="button" data-action="save-token" class="primary">Enregistrer</button>
+                    <button type="button" data-action="clear-storage">Effacer</button>
                 </div>
             </div>
         </details>
@@ -61,308 +55,84 @@
 <nav class="breadcrumb">
     <a href="./">console</a>
     <span>/</span>
-    <span>collections</span>
+    <span>déclencher</span>
 </nav>
 
 <main id="app-main">
-    <h1 class="page-title">Collections Albert</h1>
+    <h1 class="page-title">Déclencher un pipeline Albert</h1>
 
-    <!-- Message d'action (persistant sur erreur, auto-hide sur succes) -->
-    <!-- NB : pas de data-show-when : showMessage() gere hidden directement -->
     <section class="rag-block hidden" id="message-block">
         <strong data-bind="message-title">-</strong>
         <p data-bind="message-text">-</p>
     </section>
 
-    <!-- Vue "non connecté" : instructions -->
-    <section class="rag-block" data-show-when="disconnected">
+    <section class="rag-block">
         <div class="block-header">
-            <h2>Bienvenue</h2>
+            <h2>Formulaire</h2>
+            <span class="muted small">Toutes les actions passent par la CI. La clé Albert reste dans le secret CI, jamais côté navigateur.</span>
         </div>
-        <p>
-            Cette page gère les collections <a href="https://albert.api.etalab.gouv.fr" target="_blank" rel="noreferrer">Albert (Etalab)</a>
-            et déclenche les pipelines RAG. Tout se passe côté navigateur : la clé Albert
-            est stockée dans le <code>localStorage</code> de ton navigateur, jamais transmise
-            à un serveur tiers.
-        </p>
-        <ol>
-            <li>Colle ta clé Albert dans le champ en haut à droite et clique <strong>Enregistrer</strong>.</li>
-            <li>La clé est mémorisée localement. Recharge la page : elle est encore là.</li>
-            <li>Utilise <strong>Changer</strong> pour la remplacer, <strong>Vider stockage local</strong> pour tout effacer.</li>
-        </ol>
-        <p class="muted small">
-            <strong>Où trouver ma clé ?</strong> Sur <a href="https://albert.api.etalab.gouv.fr" target="_blank" rel="noreferrer">albert.api.etalab.gouv.fr</a>,
-            crée un compte et génère une clé (elle commence par <code>sk-...</code>).
-        </p>
+
+        <form id="pipeline-form" class="stacked-form">
+
+            <label>
+                <span>Action</span>
+                <select name="action" required>
+                    <option value="refresh" selected>refresh — rafraîchir le rapport uniquement</option>
+                    <option value="create">create — créer une nouvelle collection</option>
+                    <option value="rename">rename — renommer ou modifier une collection</option>
+                    <option value="empty">empty — vider une collection (documents supprimés)</option>
+                    <option value="delete">delete — détruire une collection</option>
+                </select>
+                <span class="hint">Choisis ce que la CI doit faire côté Albert. Toutes les actions produisent aussi un rapport à jour.</span>
+            </label>
+
+            <div class="grid-2 action-fields" data-show-for="create rename empty delete">
+                <label>
+                    <span>ID collection</span>
+                    <input type="text" name="collection_id" placeholder="ex. 241559">
+                    <span class="hint">Requis pour rename/empty/delete. Consulte le rapport précédent pour trouver l'ID.</span>
+                </label>
+                <label>
+                    <span>Nom</span>
+                    <input type="text" name="name" placeholder="ex. eduscol-2027">
+                    <span class="hint">Requis pour create. Optionnel pour rename.</span>
+                </label>
+                <label>
+                    <span>Description</span>
+                    <input type="text" name="description" placeholder="Description libre">
+                </label>
+                <label>
+                    <span>Visibilité</span>
+                    <select name="visibility">
+                        <option value="private" selected>private</option>
+                        <option value="public">public</option>
+                    </select>
+                </label>
+            </div>
+
+            <div class="actions-row">
+                <button type="submit" class="primary">Lancer le pipeline</button>
+                <span class="muted small">
+                    <span data-show-when="no-token">Ouvre GitHub Actions dans un nouvel onglet, tu confirmes en cliquant "Run workflow".</span>
+                    <span data-show-when="has-token" class="hidden">Déclenche directement via l'API GitHub (token en session).</span>
+                </span>
+            </div>
+        </form>
     </section>
 
-    <!-- Vue "connecté" : gestion des collections -->
-    <div data-show-when="connected">
-
-        <section class="rag-block collection-manager">
-            <div class="block-header">
-                <h2>Gestionnaire de collections</h2>
-                <div class="header-actions">
-                    <button type="button" class="primary" data-action="open-modal" data-modal="modal-create">+ Nouvelle collection</button>
-                    <button type="button" data-action="refresh-collections">Rafraîchir</button>
-                </div>
-            </div>
-
-            <!-- Banner : collection sélectionnée -->
-            <div id="selected-banner" class="selected-collection-banner hidden" data-show-when="collection-selected">
-                <div class="banner-head">
-                    <div>
-                        <span class="badge ready">Collection sélectionnée</span>
-                        <h3 data-bind="selected-name">-</h3>
-                    </div>
-                    <div class="banner-stats">
-                        <div>
-                            <span>documents</span>
-                            <strong data-bind="selected-documents">0</strong>
-                        </div>
-                        <div>
-                            <span>stockage (% quota 10 Mo)</span>
-                            <strong data-bind="selected-size">0 B</strong>
-                        </div>
-                        <div>
-                            <span>visibilité</span>
-                            <strong data-bind="selected-visibility">-</strong>
-                        </div>
-                    </div>
-                </div>
-                <div class="quota-warning hidden" data-show-when="quota-full">
-                    Quota stockage atteint (~10 Mo par collection sur compte expérimentation).
-                    Ajouter des documents échouera. Contact upgrade : <code>albert-contact@etalab.gouv.fr</code>.
-                </div>
-                <dl class="banner-meta">
-                    <div><dt>Identifiant</dt><dd class="mono" data-bind="selected-id">-</dd></div>
-                    <div><dt>Propriétaire</dt><dd class="mono" data-bind="selected-owner">-</dd></div>
-                    <div><dt>Description</dt><dd data-bind="selected-description">-</dd></div>
-                    <div><dt>Créée le</dt><dd data-bind="selected-created">-</dd></div>
-                    <div><dt>Modifiée le</dt><dd data-bind="selected-updated">-</dd></div>
-                </dl>
-                <div class="banner-actions">
-                    <button type="button" data-action="open-modal" data-modal="modal-pipeline" class="primary">Lancer un pipeline RAG</button>
-                    <button type="button" data-action="open-modal" data-modal="modal-rename">Renommer / modifier</button>
-                    <button type="button" data-action="open-modal" data-modal="modal-empty" class="danger">Vider la collection</button>
-                    <button type="button" data-action="open-modal" data-modal="modal-delete" class="danger">Détruire la collection</button>
-                </div>
-            </div>
-
-            <!-- Listes des collections -->
-            <details class="section-details" open>
-                <summary>Mes collections <span class="muted small">(<span data-bind="my-count">0</span>)</span></summary>
-                <div class="table-wrap">
-                    <table class="data-table">
-                        <thead>
-                            <tr>
-                                <th>ID</th><th>Nom</th>
-                                <th class="right">Docs</th><th class="right">Taille</th>
-                                <th>Visibilité</th><th>Créée</th>
-                                <th class="right">Actions</th>
-                            </tr>
-                        </thead>
-                        <tbody data-bind="my-collections-body">
-                            <tr><td colspan="7" class="muted small">Chargement...</td></tr>
-                        </tbody>
-                    </table>
-                </div>
-            </details>
-
-            <details class="section-details">
-                <summary>Collections publiques d'autres utilisateurs <span class="muted small">(<span data-bind="other-count">0</span>)</span></summary>
-                <p class="muted small">
-                    Tu peux les sélectionner pour interroger leur contenu, mais tu ne peux ni les
-                    modifier ni les vider (Albert répondra <code>403</code>).
-                </p>
-                <div class="table-wrap">
-                    <table class="data-table">
-                        <thead>
-                            <tr>
-                                <th>ID</th><th>Nom</th>
-                                <th class="right">Docs</th><th class="right">Taille</th>
-                                <th>Propriétaire</th><th>Créée</th>
-                                <th class="right">Actions</th>
-                            </tr>
-                        </thead>
-                        <tbody data-bind="other-collections-body">
-                            <tr><td colspan="7" class="muted small">-</td></tr>
-                        </tbody>
-                    </table>
-                </div>
-            </details>
-        </section>
-
-        <!-- Compte Albert -->
-        <section class="rag-block">
-            <div class="block-header">
-                <h2>Compte Albert</h2>
-                <span class="muted small">Info clé, quotas et modèles disponibles</span>
-            </div>
-            <dl class="banner-meta">
-                <div><dt>E-mail</dt><dd data-bind="me-email">-</dd></div>
-                <div><dt>Nom</dt><dd data-bind="me-name">-</dd></div>
-                <div><dt>Identifiant</dt><dd class="mono" data-bind="me-id">-</dd></div>
-                <div><dt>Organisation</dt><dd class="mono" data-bind="me-org">-</dd></div>
-                <div><dt>Priorité</dt><dd data-bind="me-priority">-</dd></div>
-                <div><dt>Expire</dt><dd data-bind="me-expires">-</dd></div>
-                <div><dt>Permissions</dt><dd class="mono small" data-bind="me-permissions">-</dd></div>
-            </dl>
-            <details class="section-details">
-                <summary>Modèles disponibles <span class="muted small">(<span data-bind="models-count">0</span>)</span></summary>
-                <div class="table-wrap">
-                    <table class="data-table">
-                        <thead>
-                            <tr>
-                                <th>Identifiant</th><th>Type</th><th>Aliases</th>
-                                <th class="right">Contexte</th>
-                                <th class="right">Coût prompt</th>
-                                <th class="right">Coût completion</th>
-                            </tr>
-                        </thead>
-                        <tbody data-bind="models-body">
-                            <tr><td colspan="6" class="muted small">-</td></tr>
-                        </tbody>
-                    </table>
-                </div>
-            </details>
-        </section>
-    </div>
-</main>
-
-<!-- ============ MODALS ============ -->
-
-<dialog class="app-modal" id="modal-create">
-    <form class="modal-form" data-form="create-collection">
-        <header>
-            <h3>Créer une nouvelle collection</h3>
-            <button type="button" class="modal-close" data-close-modal aria-label="Fermer">&times;</button>
-        </header>
-        <label>Nom <span class="required">*</span>
-            <input type="text" name="name" required placeholder="ex. docs-forge-apps-education">
-        </label>
-        <label>Description
-            <input type="text" name="description" placeholder="Description libre">
-        </label>
-        <label>Visibilité
-            <select name="visibility">
-                <option value="private" selected>private</option>
-                <option value="public">public</option>
-            </select>
-        </label>
-        <label class="inline-checkbox">
-            <input type="checkbox" name="auto_select" checked>
-            Sélectionner automatiquement après création
-        </label>
-        <footer>
-            <button type="button" data-close-modal>Annuler</button>
-            <button type="submit" class="primary">Créer</button>
-        </footer>
-    </form>
-</dialog>
-
-<dialog class="app-modal" id="modal-rename">
-    <form class="modal-form" data-form="rename-collection">
-        <header>
-            <h3>Renommer / modifier</h3>
-            <button type="button" class="modal-close" data-close-modal aria-label="Fermer">&times;</button>
-        </header>
-        <label>Nom <span class="required">*</span>
-            <input type="text" name="name" required data-fill="selected-name-value">
-        </label>
-        <label>Description
-            <input type="text" name="description" data-fill="selected-description-value">
-        </label>
-        <label>Visibilité
-            <select name="visibility" data-fill-select="selected-visibility-value">
-                <option value="private">private</option>
-                <option value="public">public</option>
-            </select>
-        </label>
-        <footer>
-            <button type="button" data-close-modal>Annuler</button>
-            <button type="submit" class="primary">Enregistrer</button>
-        </footer>
-    </form>
-</dialog>
-
-<dialog class="app-modal" id="modal-empty">
-    <form class="modal-form" data-form="empty-collection">
-        <header>
-            <h3>Vider la collection</h3>
-            <button type="button" class="modal-close" data-close-modal aria-label="Fermer">&times;</button>
-        </header>
-        <p class="modal-warn">
-            Cette action supprime <strong>tous les documents</strong> de la collection sélectionnée.
-            La collection elle-même est conservée.
-        </p>
-        <label>Taper <code>VIDER</code> pour confirmer
-            <input type="text" name="confirm" required placeholder="VIDER" autocomplete="off">
-        </label>
-        <footer>
-            <button type="button" data-close-modal>Annuler</button>
-            <button type="submit" class="danger">Supprimer tous les documents</button>
-        </footer>
-    </form>
-</dialog>
-
-<dialog class="app-modal" id="modal-delete">
-    <form class="modal-form" data-form="delete-collection">
-        <header>
-            <h3>Détruire la collection</h3>
-            <button type="button" class="modal-close" data-close-modal aria-label="Fermer">&times;</button>
-        </header>
-        <p class="modal-warn">
-            <strong>Action irréversible.</strong> La collection et tous ses documents seront détruits.
-        </p>
-        <label>Taper <code>SUPPRIMER</code> pour confirmer
-            <input type="text" name="confirm" required placeholder="SUPPRIMER" autocomplete="off">
-        </label>
-        <footer>
-            <button type="button" data-close-modal>Annuler</button>
-            <button type="submit" class="danger">Détruire</button>
-        </footer>
-    </form>
-</dialog>
-
-<dialog class="app-modal" id="modal-pipeline">
-    <form class="modal-form" data-form="trigger-pipeline">
-        <header>
-            <h3>Lancer un pipeline RAG</h3>
-            <button type="button" class="modal-close" data-close-modal aria-label="Fermer">&times;</button>
-        </header>
+    <section class="rag-block">
+        <div class="block-header">
+            <h2>Où trouver le rapport</h2>
+        </div>
         <p class="muted small">
-            Ce bouton ouvre l'UI GitHub Actions avec les paramètres pré-remplis. Tu confirmes le
-            lancement côté GitHub (nécessite d'être authentifié GitHub avec droits sur ce repo).
+            À la fin de chaque run, va sur <strong>Actions &rarr; le run &rarr; onglet Summary</strong> pour voir le tableau
+            des collections + modèles. Les artefacts <code>report.html</code> et <code>report.json</code> sont téléchargeables sur la même page.
         </p>
-        <label>URL du dépôt à indexer
-            <input type="text" name="target_repo_url" required
-                   value="https://forge.apps.education.fr/docs/docs.forge.apps.education.fr">
-        </label>
-        <label>Branche
-            <input type="text" name="target_ref" value="main">
-        </label>
-        <label>Dossier contenu
-            <input type="text" name="content_dir" placeholder="content (vide = auto)">
-        </label>
-        <label>URL publique du site
-            <input type="text" name="site_base_url"
-                   value="https://docs.forge.apps.education.fr">
-        </label>
-        <label class="inline-checkbox">
-            <input type="checkbox" name="empty_collection_first">
-            Vider la collection avant l'upload
-        </label>
-        <label class="inline-checkbox">
-            <input type="checkbox" name="dry_run">
-            Dry-run (segmenter sans uploader)
-        </label>
-        <footer>
-            <button type="button" data-close-modal>Annuler</button>
-            <button type="submit" class="primary">Ouvrir GitHub Actions</button>
-        </footer>
-    </form>
-</dialog>
+        <p>
+            <a id="link-actions" target="_blank" rel="noreferrer">Ouvrir l'onglet Actions →</a>
+        </p>
+    </section>
+</main>
 
 <script src="assets/app.js" defer></script>
 </body>

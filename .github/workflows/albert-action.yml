@@ -1,0 +1,111 @@
+# Workflow "Albert action" - refresh + gestion collections + rapport
+#
+# Declenche uniquement a la main (workflow_dispatch), soit via l'UI GitHub
+# Actions, soit via l'API depuis la Pages (avec un PAT en sessionStorage).
+#
+# Sorties :
+#   - Job Summary Markdown (visible directement dans l'onglet Actions du run)
+#   - Artefact "rapport" : report.html + report.json + report.md
+#     (telechargeables depuis la page du run pendant 30 jours)
+#
+# Aucun commit dans le repo. La cle Albert vit uniquement dans le secret CI.
+
+name: Albert action
+
+run-name: >-
+  ${{ inputs.action }}${{ inputs.collection_id != '' && format(' (col {0})', inputs.collection_id) || '' }}${{ inputs.name != '' && format(' [{0}]', inputs.name) || '' }}
+
+on:
+  workflow_dispatch:
+    inputs:
+      action:
+        description: 'Action a executer sur Albert'
+        required: true
+        type: choice
+        default: refresh
+        options: [refresh, create, rename, empty, delete]
+      collection_id:
+        description: 'ID collection (rename/empty/delete)'
+        required: false
+        default: ''
+      name:
+        description: 'Nom (create) ou nouveau nom (rename)'
+        required: false
+        default: ''
+      description:
+        description: 'Description (create/rename)'
+        required: false
+        default: ''
+      visibility:
+        description: 'Visibilite (create/rename)'
+        required: false
+        type: choice
+        default: private
+        options: [private, public]
+
+concurrency:
+  group: albert-action
+  cancel-in-progress: false
+
+jobs:
+  action:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+          cache: pip
+
+      - name: Install deps
+        run: pip install --quiet -r requirements.txt
+
+      - name: Resolve Albert API key
+        env:
+          SECRET_TOKEN: ${{ secrets.ALBERT_API_KEY }}
+        run: |
+          if [ -z "$SECRET_TOKEN" ]; then
+            echo "ERREUR: secret ALBERT_API_KEY absent."
+            echo "Settings > Secrets and variables > Actions > New secret."
+            exit 1
+          fi
+          TOKEN=$(printf '%s' "$SECRET_TOKEN" | tr -d '\r\n\t ')
+          if [ "${TOKEN#sk-}" = "$TOKEN" ]; then
+            echo "ATTENTION : la cle ne commence pas par 'sk-'."
+          fi
+          echo "Longueur token : ${#TOKEN} caracteres"
+          echo "::add-mask::$TOKEN"
+          echo "ALBERT_API_KEY=$TOKEN" >> "$GITHUB_ENV"
+
+      - name: Execute action + generate report
+        env:
+          ACTION: ${{ inputs.action }}
+          COLLECTION_ID: ${{ inputs.collection_id }}
+          COL_NAME: ${{ inputs.name }}
+          COL_DESC: ${{ inputs.description }}
+          COL_VISIBILITY: ${{ inputs.visibility }}
+        run: |
+          python -m app.state_action \
+            --action "$ACTION" \
+            --collection-id "$COLLECTION_ID" \
+            --name "$COL_NAME" \
+            --description "$COL_DESC" \
+            --visibility "$COL_VISIBILITY" \
+            --api-key "$ALBERT_API_KEY" \
+            --out-dir public
+          echo "---"
+          echo "Artefacts produits :"
+          ls -la public/
+
+      - name: Upload rapport
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: rapport
+          path: |
+            public/report.html
+            public/report.json
+            public/report.md
+          retention-days: 30
+          if-no-files-found: warn
