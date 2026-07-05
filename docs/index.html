@@ -15,14 +15,19 @@
         frame-ancestors 'none';
         form-action 'self';
     ">
+    <link rel="icon" type="image/png" href="assets/favicon.png">
+    <link rel="apple-touch-icon" href="assets/chat-doc-192x192.png">
     <link rel="stylesheet" href="assets/app.css">
 </head>
 <body>
 
 <header id="app-header">
     <div class="brand">
-        <strong>Atelier RAG</strong>
-        <em>Albert</em>
+        <img class="brand-logo" src="assets/chat-doc-192x192.png" alt="Chat-Doc" width="40" height="40">
+        <div class="brand-title">
+            <span>ATELIER RAG</span>
+            <span class="brand-badge">béta</span>
+        </div>
     </div>
     <div class="token-zone">
         <details class="token-details" id="token-details">
@@ -53,7 +58,14 @@
     </div>
 </header>
 
+<nav class="breadcrumb">
+    <a href="./">console</a>
+    <span>/</span>
+    <span>collections</span>
+</nav>
+
 <main id="app-main">
+    <h1 class="page-title">Collections Albert</h1>
 
     <!-- Message d'action -->
     <section class="rag-block hidden" data-show-when="has-message" id="message-block">
